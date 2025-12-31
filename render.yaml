@@ -1,9 +1,9 @@
 services:
      -type: web
      name: gaaji-server
-     runtime:node
-     plan:free
-     buildcommand:npm install
+     runtime: node
+     plan: free
+     buildcommand: npm install
 startcommand: npm start
 envVars:
   - key: NODE_ENV
