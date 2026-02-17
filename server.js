@@ -5,41 +5,40 @@ const { Server } = require("socket.io");
 
 const app = express();
 
-// Health check (VERY IMPORTANT for Render)
+// ✅ Health check (VERY IMPORTANT for Render)
 app.get("/", (req, res) => {
-  res.send("Gaaji signaling server running");
+  res.send("Omingle signaling server running");
 });
 
-// (Optional) Polling endpoint as fallback for clients without WS
-app.get("/api/online-count", (req, res) => {
-  const online = io.sockets.sockets.size;
-  res.json({ online });
-});
-
-// Create HTTP server ONCE
+// Create HTTP server
 const server = http.createServer(app);
 
-// Attach Socket.io ONCE (this is the fix)
+// Attach Socket.io
 const io = new Server(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"]
   },
-  transports: ["websocket"] // disable polling safely
+  transports: ["websocket"] // WebSocket only
 });
 
 let waitingUser = null;
 
 // --- helper to broadcast current online users ---
 function broadcastOnline() {
-  const online = io.sockets.sockets.size; // Socket.IO v4
+  const online = io.sockets.sockets.size;
   io.emit("onlineCount", online);
 }
 
-io.on("connection", socket => {
+// Optional API route
+app.get("/api/online-count", (req, res) => {
+  const online = io.sockets.sockets.size;
+  res.json({ online });
+});
+
+io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
-  // broadcast on connect
   broadcastOnline();
 
   if (waitingUser) {
@@ -54,7 +53,7 @@ io.on("connection", socket => {
     waitingUser = socket;
   }
 
-  socket.on("signal", data => {
+  socket.on("signal", (data) => {
     socket.partner?.emit("signal", data);
   });
 
@@ -62,12 +61,13 @@ io.on("connection", socket => {
     if (waitingUser === socket) waitingUser = null;
     socket.partner?.emit("peer-disconnected");
 
-    // broadcast on disconnect
     broadcastOnline();
   });
 });
 
-// ✅ THIS MUST BE LAST
-server.listen(process.env.PORT, () => {
-  console.log("✅ Gaaji signaling server running");
+// ✅ REQUIRED for Render (dynamic port)
+const PORT = process.env.PORT || 10000;
+
+server.listen(PORT, () => {
+  console.log(`✅ Omingle signaling server running on port ${PORT}`);
 });
