@@ -7,7 +7,7 @@ const app = express();
 
 // Health check (VERY IMPORTANT for Render)
 app.get("/", (req, res) => {
-  res.send("Gaaji signaling server running");
+  res.send("Omingle signaling server running");
 });
 
 // Create HTTP server ONCE
@@ -51,5 +51,6 @@ io.on("connection", socket => {
 
 // ✅ THIS MUST BE LAST
 server.listen(process.env.PORT, () => {
-  console.log("✅ Gaaji signaling server running");
+  console.log("✅ Omingle signaling server running");
 });
+
