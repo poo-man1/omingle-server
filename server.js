@@ -7,7 +7,13 @@ const app = express();
 
 // Health check (VERY IMPORTANT for Render)
 app.get("/", (req, res) => {
-  res.send("Omingle signaling server running");
+  res.send("Gaaji signaling server running");
+});
+
+// (Optional) Polling endpoint as fallback for clients without WS
+app.get("/api/online-count", (req, res) => {
+  const online = io.sockets.sockets.size;
+  res.json({ online });
 });
 
 // Create HTTP server ONCE
@@ -24,8 +30,17 @@ const io = new Server(server, {
 
 let waitingUser = null;
 
+// --- helper to broadcast current online users ---
+function broadcastOnline() {
+  const online = io.sockets.sockets.size; // Socket.IO v4
+  io.emit("onlineCount", online);
+}
+
 io.on("connection", socket => {
   console.log("User connected:", socket.id);
+
+  // broadcast on connect
+  broadcastOnline();
 
   if (waitingUser) {
     socket.partner = waitingUser;
@@ -46,11 +61,13 @@ io.on("connection", socket => {
   socket.on("disconnect", () => {
     if (waitingUser === socket) waitingUser = null;
     socket.partner?.emit("peer-disconnected");
+
+    // broadcast on disconnect
+    broadcastOnline();
   });
 });
 
 // ✅ THIS MUST BE LAST
 server.listen(process.env.PORT, () => {
-  console.log("✅ Omingle signaling server running");
+  console.log("✅ Gaaji signaling server running");
 });
-
