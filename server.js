@@ -19,7 +19,7 @@ const io = new Server(server, {
     origin: "*",
     methods: ["GET", "POST"]
   },
-  transports: ["websocket"] // WebSocket only
+  transports: ["websocket"]
 });
 
 let waitingUser = null;
@@ -28,6 +28,7 @@ let waitingUser = null;
 function broadcastOnline() {
   const online = io.sockets.sockets.size;
   io.emit("onlineCount", online);
+  console.log("Online users:", online);
 }
 
 // Optional API route
@@ -39,6 +40,7 @@ app.get("/api/online-count", (req, res) => {
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
+  // update count when user connects
   broadcastOnline();
 
   if (waitingUser) {
@@ -58,9 +60,13 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
+    console.log("User disconnected:", socket.id);
+
     if (waitingUser === socket) waitingUser = null;
+
     socket.partner?.emit("peer-disconnected");
 
+    // update count when user leaves
     broadcastOnline();
   });
 });
