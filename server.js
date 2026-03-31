@@ -5,45 +5,32 @@ const { Server } = require("socket.io");
 
 const app = express();
 
-// ✅ Health check (VERY IMPORTANT for Render)
 app.get("/", (req, res) => {
   res.send("Omingle signaling server running");
 });
 
-// Create HTTP server
 const server = http.createServer(app);
 
-// Attach Socket.io
 const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  },
-  transports: ["websocket"]
+  cors: { origin: "*", methods: ["GET", "POST"] },
+  transports: ["websocket", "polling"] // ✅ added polling as fallback
 });
 
 let waitingUser = null;
+const reportCounts = {}; // track reports per socket id
 
-// --- helper to broadcast current online users ---
 function broadcastOnline() {
   const online = io.sockets.sockets.size;
   io.emit("onlineCount", online);
-  console.log("Online users:", online);
 }
 
-// Optional API route
 app.get("/api/online-count", (req, res) => {
-  const online = io.sockets.sockets.size;
-  res.json({ online });
+  res.json({ online: io.sockets.sockets.size });
 });
 
-io.on("connection", (socket) => {
-  console.log("User connected:", socket.id);
-
-  // update count when user connects
-  broadcastOnline();
-
-  if (waitingUser) {
+function matchUser(socket) {
+  if (waitingUser && waitingUser.id !== socket.id) {
+    // Pair them
     socket.partner = waitingUser;
     waitingUser.partner = socket;
 
@@ -53,27 +40,76 @@ io.on("connection", (socket) => {
     waitingUser = null;
   } else {
     waitingUser = socket;
+    socket.emit("waiting"); // ✅ tell client they're in queue
   }
+}
 
+io.on("connection", (socket) => {
+  console.log("User connected:", socket.id);
+  broadcastOnline();
+
+  // ✅ Match on connect
+  matchUser(socket);
+
+  // ✅ WebRTC signaling — relay to partner
   socket.on("signal", (data) => {
     socket.partner?.emit("signal", data);
   });
 
+  // ✅ Chat relay
+  socket.on("chat", (msg) => {
+    if (typeof msg !== "string" || msg.length > 500) return;
+    socket.partner?.emit("chat", msg);
+  });
+
+  // ✅ Next — disconnect from current partner and re-queue
+  socket.on("next", () => {
+    if (socket.partner) {
+      socket.partner.emit("peer-disconnected");
+      socket.partner.partner = null;
+      // Re-queue the old partner too
+      matchUser(socket.partner);
+    }
+    socket.partner = null;
+    matchUser(socket);
+  });
+
+  // ✅ Report handling
+  socket.on("report", () => {
+    const partnerId = socket.partner?.id;
+    if (!partnerId) return;
+
+    reportCounts[partnerId] = (reportCounts[partnerId] || 0) + 1;
+    console.log(`User ${partnerId} reported. Count: ${reportCounts[partnerId]}`);
+
+    if (reportCounts[partnerId] >= 3) {
+      socket.partner?.emit("banned");
+      socket.partner?.disconnect();
+      delete reportCounts[partnerId];
+    } else {
+      socket.partner?.emit("reported");
+    }
+  });
+
+  // ✅ Disconnect cleanup
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
 
     if (waitingUser === socket) waitingUser = null;
 
-    socket.partner?.emit("peer-disconnected");
+    if (socket.partner) {
+      socket.partner.emit("peer-disconnected");
+      socket.partner.partner = null;
+      // Re-queue partner so they don't get stuck
+      matchUser(socket.partner);
+    }
 
-    // update count when user leaves
+    delete reportCounts[socket.id];
     broadcastOnline();
   });
 });
 
-// ✅ REQUIRED for Render (dynamic port)
 const PORT = process.env.PORT || 10000;
-
 server.listen(PORT, () => {
   console.log(`✅ Omingle signaling server running on port ${PORT}`);
 });
