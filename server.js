@@ -17,7 +17,7 @@ const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: "*",
+    origin: ["https://omingle.netlify.app","*"],
     methods: ["GET", "POST"]
   },
   transports: ["polling", "websocket"], // ✅ polling first — survives Render cold start
