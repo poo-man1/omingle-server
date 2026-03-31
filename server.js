@@ -5,15 +5,13 @@ const { Server } = require("socket.io");
 
 const app = express();
 
-// ✅ Health check (VERY IMPORTANT for Render)
+// ✅ Health check
 app.get("/", (req, res) => {
   res.send("Omingle signaling server running");
 });
 
-// Create HTTP server
 const server = http.createServer(app);
 
-// Attach Socket.io
 const io = new Server(server, {
   cors: {
     origin: "*",
@@ -24,26 +22,29 @@ const io = new Server(server, {
 
 let waitingUser = null;
 
-// --- helper to broadcast current online users ---
+// ================================
+// 🔁 ONLINE COUNT
+// ================================
 function broadcastOnline() {
   const online = io.sockets.sockets.size;
   io.emit("onlineCount", online);
   console.log("Online users:", online);
 }
 
-// Optional API route
-app.get("/api/online-count", (req, res) => {
-  const online = io.sockets.sockets.size;
-  res.json({ online });
-});
-
+// ================================
+// 🔌 SOCKET CONNECTION
+// ================================
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
-
-  // update count when user connects
   broadcastOnline();
 
-  if (waitingUser) {
+  socket.partner = null;
+
+  // ================================
+  // 🎯 MATCHING LOGIC (FIXED)
+  // ================================
+  if (waitingUser && waitingUser !== socket) {
+    // Pair both users
     socket.partner = waitingUser;
     waitingUser.partner = socket;
 
@@ -55,23 +56,66 @@ io.on("connection", (socket) => {
     waitingUser = socket;
   }
 
+  // ================================
+  // 🔁 SIGNAL RELAY
+  // ================================
   socket.on("signal", (data) => {
-    socket.partner?.emit("signal", data);
+    if (socket.partner) {
+      socket.partner.emit("signal", data);
+    }
   });
 
+  // ================================
+  // 🔄 NEXT / RESET SUPPORT
+  // ================================
+  socket.on("next", () => {
+    if (socket.partner) {
+      socket.partner.emit("peer-disconnected");
+      socket.partner.partner = null;
+    }
+
+    socket.partner = null;
+
+    if (waitingUser === socket) {
+      waitingUser = null;
+    }
+
+    // Put user back in queue
+    if (waitingUser) {
+      socket.partner = waitingUser;
+      waitingUser.partner = socket;
+
+      socket.emit("matched", { initiator: true });
+      waitingUser.emit("matched", { initiator: false });
+
+      waitingUser = null;
+    } else {
+      waitingUser = socket;
+    }
+  });
+
+  // ================================
+  // ❌ DISCONNECT HANDLING (FIXED)
+  // ================================
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
 
-    if (waitingUser === socket) waitingUser = null;
+    if (waitingUser === socket) {
+      waitingUser = null;
+    }
 
-    socket.partner?.emit("peer-disconnected");
+    if (socket.partner) {
+      socket.partner.emit("peer-disconnected");
+      socket.partner.partner = null;
+    }
 
-    // update count when user leaves
     broadcastOnline();
   });
 });
 
-// ✅ REQUIRED for Render (dynamic port)
+// ================================
+// 🚀 START SERVER
+// ================================
 const PORT = process.env.PORT || 10000;
 
 server.listen(PORT, () => {
