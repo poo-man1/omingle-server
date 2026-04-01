@@ -3,125 +3,128 @@ const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 
-// ✅ node-fetch for keep-alive ping (run: npm install node-fetch)
-const fetch = (...args) => import("node-fetch").then(({ default: f }) => f(...args));
+const fetch = (...args) =>
+  import("node-fetch").then(({ default: f }) => f(...args));
 
 const app = express();
 
-// ✅ Health check — required for Render
-app.get("/", (req, res) => {
-  res.send("Omingle signaling server running");
-});
+app.get("/", (req, res) => res.send("Omingle signaling server running ✅"));
 
 const server = http.createServer(app);
 
 const io = new Server(server, {
-  cors: {
-    origin: ["https://omingle.netlify.app","*"],
-    methods: ["GET", "POST"]
-  },
-  transports: ["polling", "websocket"], // ✅ polling first — survives Render cold start
+  cors: { origin: ["https://omingle.netlify.app", "*"], methods: ["GET", "POST"] },
+  transports: ["polling", "websocket"],
   pingTimeout: 30000,
   pingInterval: 10000
 });
 
-// ✅ Keep Render free tier alive — pings itself every 14 minutes
+// ✅ Keep Render alive
 const SELF_URL = process.env.SELF_URL || "https://gaaji-server.onrender.com";
 setInterval(() => {
-  fetch(SELF_URL)
-    .then(() => console.log("✅ Keep-alive ping sent"))
-    .catch(err => console.log("⚠️ Ping failed:", err.message));
+  fetch(SELF_URL).catch(e => console.log("Ping failed:", e.message));
 }, 14 * 60 * 1000);
 
 let waitingUser = null;
 const reportCounts = {};
 
 function broadcastOnline() {
-  const online = io.sockets.sockets.size;
-  io.emit("onlineCount", online);
-  console.log("Online users:", online);
+  io.emit("onlineCount", io.sockets.sockets.size);
 }
 
 app.get("/api/online-count", (req, res) => {
   res.json({ online: io.sockets.sockets.size });
 });
 
-// ✅ Match or queue a socket
 function matchUser(socket) {
-  if (waitingUser && waitingUser.id !== socket.id && waitingUser.connected) {
+  // ✅ GUARD: already has a partner, don't match again
+  if (socket.partner) {
+    console.log("Skip match — already has partner:", socket.id);
+    return;
+  }
+
+  // ✅ GUARD: already waiting, don't add twice
+  if (waitingUser === socket) {
+    console.log("Skip match — already waiting:", socket.id);
+    return;
+  }
+
+  if (waitingUser && waitingUser.connected && !waitingUser.partner) {
+    // Pair them
     socket.partner = waitingUser;
     waitingUser.partner = socket;
 
     socket.emit("matched", { initiator: true });
     waitingUser.emit("matched", { initiator: false });
 
-    console.log(`Matched: ${socket.id} <-> ${waitingUser.id}`);
+    console.log(`✅ Matched: ${socket.id} <-> ${waitingUser.id}`);
     waitingUser = null;
   } else {
+    // Wait for next person
     waitingUser = socket;
     socket.emit("waiting");
-    console.log(`Waiting: ${socket.id}`);
+    console.log(`⏳ Waiting: ${socket.id}`);
   }
 }
 
 io.on("connection", (socket) => {
-  console.log("User connected:", socket.id);
+  console.log("Connected:", socket.id);
   broadcastOnline();
-  matchUser(socket);
 
-  // ✅ WebRTC signaling relay
+  // ✅ Small delay to prevent race on reconnect
+  setTimeout(() => matchUser(socket), 300);
+
   socket.on("signal", (data) => {
     if (socket.partner && socket.partner.connected) {
       socket.partner.emit("signal", data);
     }
   });
 
-  // ✅ Chat relay with safety limit
   socket.on("chat", (msg) => {
     if (typeof msg !== "string" || msg.length > 500) return;
-    if (socket.partner && socket.partner.connected) {
-      socket.partner.emit("chat", msg);
-    }
+    socket.partner?.emit("chat", msg);
   });
 
-  // ✅ Next — skip to new stranger, no page reload
   socket.on("next", () => {
+    // ✅ Clear partner on both sides before re-matching
     if (socket.partner) {
-      socket.partner.emit("peer-disconnected");
-      const oldPartner = socket.partner;
-      socket.partner = null;
-      oldPartner.partner = null;
-      matchUser(oldPartner); // re-queue old partner
+      const old = socket.partner;
+      old.partner = null;
+      old.emit("peer-disconnected");
+      // Re-queue old partner after short delay
+      setTimeout(() => matchUser(old), 300);
     }
-    matchUser(socket);
+    socket.partner = null;
+    setTimeout(() => matchUser(socket), 300);
   });
 
-  // ✅ Report — auto-ban after 3 reports
   socket.on("report", () => {
-    const partnerId = socket.partner?.id;
-    if (!partnerId) return;
-    reportCounts[partnerId] = (reportCounts[partnerId] || 0) + 1;
-    console.log(`User ${partnerId} reported. Total: ${reportCounts[partnerId]}`);
-    if (reportCounts[partnerId] >= 3) {
-      socket.partner?.emit("banned");
-      socket.partner?.disconnect();
-      delete reportCounts[partnerId];
+    const partner = socket.partner;
+    if (!partner) return;
+    reportCounts[partner.id] = (reportCounts[partner.id] || 0) + 1;
+    if (reportCounts[partner.id] >= 3) {
+      partner.emit("banned");
+      partner.disconnect();
+      delete reportCounts[partner.id];
     } else {
-      socket.partner?.emit("reported");
+      partner.emit("reported");
     }
   });
 
-  // ✅ Disconnect — clean up and re-queue partner
   socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id);
+    console.log("Disconnected:", socket.id);
+
+    // ✅ Clear from waiting queue
     if (waitingUser === socket) waitingUser = null;
+
+    // ✅ Notify partner and re-queue them
     if (socket.partner) {
-      socket.partner.emit("peer-disconnected");
-      const oldPartner = socket.partner;
-      socket.partner = null;
-      oldPartner.partner = null;
-      matchUser(oldPartner);
+      const old = socket.partner;
+      old.partner = null;
+      old.emit("peer-disconnected");
+      setTimeout(() => matchUser(old), 500);
     }
+
     delete reportCounts[socket.id];
     broadcastOnline();
   });
@@ -129,5 +132,5 @@ io.on("connection", (socket) => {
 
 const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
-  console.log(`✅ Omingle signaling server running on port ${PORT}`);
+  console.log(`✅ Omingle server running on port ${PORT}`);
 });
