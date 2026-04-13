@@ -13,7 +13,14 @@ app.get("/", (req, res) => res.send("Omingle signaling server running ✅"));
 const server = http.createServer(app);
 
 const io = new Server(server, {
-  cors: { origin: ["https://omingle.netlify.app", "*"], methods: ["GET", "POST"] },
+  cors: {
+    origin: [
+      "https://omingle.netlify.app",
+      "https://gomingle.xyz",
+      "https://www.gomingle.xyz"
+    ],
+    methods: ["GET", "POST"]
+  },
   transports: ["polling", "websocket"],
   pingTimeout: 30000,
   pingInterval: 10000
